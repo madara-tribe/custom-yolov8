@@ -604,7 +604,7 @@ def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
 def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
     # Parse a YOLO model.yaml dictionary into a PyTorch model
     import ast
-    model_type='yolov7s'
+    model_type='Yolov8s'
     # Args
     max_channels = float('inf')
     nc, act, scales = (d.get(x) for x in ('nc', 'activation', 'scales'))
@@ -674,10 +674,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         if i == 0:
             ch = []
         ch.append(c2)
-    if model_type=='yolov7s':
-        from .v8s import Yolov8
+    if model_type=='Yolov8s':
+        from .v8s import Yolov8s
         from .v8s import Detect as D
-        use_layers = nn.Sequential(Yolov8(ch=3),
+        use_layers = nn.Sequential(Yolov8s(ch=3),
                                D(nc=4, ch=[64, 128, 256]))
         print("pass here")
         return use_layers, sorted(save)
