@@ -258,12 +258,12 @@ class Detect(nn.Module):
 
      
         
-class Yolov8(nn.Module):
+class Yolov8s(nn.Module):
     def __init__(self, ch=3):  # model, input channels, number of classes
-        super(Yolov8, self).__init__()
+        super(Yolov8s, self).__init__()
         self.i = 0
         self.f = -1
-        self.t = 'ultralytics.nn.v8s.Yolov8'
+        self.t = 'custom.nn.v8s.Yolov8'
         self.conv1 = Conv(ch, 16, k=3, s=2)
         self.conv2 = Conv(16, 32, k=3, s=2)
         self.c2f_1 = C2f(32, 32, n=1, shortcut=True)
@@ -318,7 +318,7 @@ class Yolov8(nn.Module):
 if __name__ == '__main__':
     from torchsummary import summary
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = Yolov8(ch=3).to(device)
+    model = Yolov8s(ch=3).to(device)
     #summary(model, (3, 640, 640))
     img = torch.rand(1, 3, 640, 640).to(device)
     y = model(img)
