@@ -1,18 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-#仮説＆調査ベースで報告
-#cobol to java 無理か可能か
-
-def autopad(k, p=None, d=1):  # kernel, padding, dilation
-    """Pad to 'same' shape outputs."""
-    if d > 1:
-        k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
-    if p is None:
-        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
-    return p
-    
+import math
+from custom.nn.modules import (Conv, Conv2, Bottleneck, C2f, SPPF, Concat, DFL)
+from .commons import check_version, autopad, dist2bbox, bbox2dist, make_anchors
 
 class DFL(nn.Module):
     """
@@ -35,112 +26,6 @@ class DFL(nn.Module):
         # return self.conv(x.view(b, self.c1, 4, a).softmax(1)).view(b, 4, a)
 
 
-class Conv(nn.Module):
-    """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
-    default_act = nn.SiLU()  # default activation
-
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
-        """Initialize Conv layer with given arguments including activation."""
-        super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
-
-    def forward(self, x):
-        """Apply convolution, batch normalization and activation to input tensor."""
-        return self.act(self.bn(self.conv(x)))
-
-    def forward_fuse(self, x):
-        """Perform transposed convolution of 2D data."""
-        return self.act(self.conv(x))
-
-
-class Conv2(Conv):
-    """Simplified RepConv module with Conv fusing."""
-
-    def __init__(self, c1, c2, k=3, s=1, p=None, g=1, d=1, act=True):
-        """Initialize Conv layer with given arguments including activation."""
-        super().__init__(c1, c2, k, s, p, g=g, d=d, act=act)
-        self.cv2 = nn.Conv2d(c1, c2, 1, s, autopad(1, p, d), groups=g, dilation=d, bias=False)  # add 1x1 conv
-
-    def forward(self, x):
-        """Apply convolution, batch normalization and activation to input tensor."""
-        return self.act(self.bn(self.conv(x) + self.cv2(x)))
-
-    def fuse_convs(self):
-        """Fuse parallel convolutions."""
-        w = torch.zeros_like(self.conv.weight.data)
-        i = [x // 2 for x in w.shape[2:]]
-        w[:, :, i[0]:i[0] + 1, i[1]:i[1] + 1] = self.cv2.weight.data.clone()
-        self.conv.weight.data += w
-        self.__delattr__('cv2')
-
-class Bottleneck(nn.Module):
-    """Standard bottleneck."""
-
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):  # ch_in, ch_out, shortcut, groups, kernels, expand
-        super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, k[0], 1)
-        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        self.add = shortcut and c1 == c2
-
-    def forward(self, x):
-        """'forward()' applies the YOLOv5 FPN to input data."""
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
-
-
-class C2f(nn.Module):
-    """CSP Bottleneck with 2 convolutions."""
-
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):  # ch_in, ch_out, number, shortcut, groups, expansion
-        super().__init__()
-        self.c = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
-
-    def forward(self, x):
-        """Forward pass through C2f layer."""
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-    def forward_split(self, x):
-        """Forward pass using split() instead of chunk()."""
-        y = list(self.cv1(x).split((self.c, self.c), 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-class SPPF(nn.Module):
-    """Spatial Pyramid Pooling - Fast (SPPF) layer for YOLOv5 by Glenn Jocher."""
-
-    def __init__(self, c1, c2, k=5):  # equivalent to SPP(k=(5, 9, 13))
-        super().__init__()
-        c_ = c1 // 2  # hidden channels
-        self.cv1 = Conv(c1, c_, 1, 1)
-        self.cv2 = Conv(c_ * 4, c2, 1, 1)
-        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
-
-    def forward(self, x):
-        """Forward pass through Ghost Convolution block."""
-        x = self.cv1(x)
-        y1 = self.m(x)
-        y2 = self.m(y1)
-        return self.cv2(torch.cat((x, y1, y2, self.m(y2)), 1))
-
-class Concat(nn.Module):
-    """Concatenate a list of tensors along dimension."""
-
-    def __init__(self, dimension=1):
-        """Concatenates a list of tensors along a specified dimension."""
-        super().__init__()
-        self.d = dimension
-
-    def forward(self, x):
-        """Forward pass for the YOLOv8 mask Proto module."""
-        return torch.cat(x, self.d)
-
 class Detect(nn.Module):
     """YOLOv8 Detect head for detection models."""
     dynamic = False  # force grid reconstruction
@@ -151,6 +36,9 @@ class Detect(nn.Module):
 
     def __init__(self, nc=80, ch=()):  # detection layer
         super().__init__()
+        self.i = 1
+        self.f = [15, 18, 21]
+        self.t = 'custom.nn.yolov8n.Detect'
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
@@ -192,21 +80,14 @@ class Detect(nn.Module):
             a[-1].bias.data[:] = 1.0  # box
             b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
 
-
-
-
-#class RepConvs_(nn.Module):
- #   def __init__(self):
- #       super(RepConvs_, self).__init__()
-  #      self.repconv1 = RepConv(128, 256)
-  #      self.repconv2 = RepConv(256, 512)
-  #  def forward(self, x):
-   #     x1 = self.repconv1(x[0])
      
         
-class Yolov8(nn.Module):
+class Yolov8n(nn.Module):
     def __init__(self, ch=3):  # model, input channels, number of classes
-        super(Yolov8, self).__init__()
+        super(Yolov8n, self).__init__()
+        self.i = 0
+        self.f = -1
+        self.t = 'custom.nn.yolov8n.Yolov8n'
         self.conv1 = Conv(ch, 16, k=3, s=2)
         self.conv2 = Conv(16, 32, k=3, s=2)
         self.c2f_1 = C2f(32, 32, n=1, shortcut=True)
@@ -229,7 +110,8 @@ class Yolov8(nn.Module):
         self.conv7 = Conv(128, 128, k=3, s=2)
         self.cat4 = Concat(dimension=1)
         self.c2f_8 = C2f(384, 256, n=1)
-        self.detect = Detect(nc=4, ch=[64, 128, 256])
+        #self.detect = Detect(nc=4, ch=[64, 128, 256])
+        
     def forward(self, x):
         x0 = self.conv1(x)
         x1 = self.conv2(x0)
@@ -253,18 +135,19 @@ class Yolov8(nn.Module):
         x19 = self.conv7(x18)
         x20 = self.cat4([x19, x9])
         x21 = self.c2f_8(x20)
-        x22 = self.detect([x15, x18, x21])
-        return x22
+        #x22 = self.detect([x15, x18, x21])
+        return [x15, x18, x21]
     
   
 if __name__ == '__main__':
     from torchsummary import summary
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = Yolov8(ch=3).to(device)
+    model = Yolov8n(ch=3).to(device)
     #summary(model, (3, 640, 640))
     img = torch.rand(1, 3, 640, 640).to(device)
     y = model(img)
     print(len(y), y[0].shape, y[1].shape, y[2].shape)
     # 3 torch.Size([1, 68, 80, 80]) torch.Size([1, 68, 40, 40]) torch.Size([1, 68, 20, 20])
     #print(model)
+
 

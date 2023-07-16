@@ -1,5 +1,3 @@
-# Ultralytics YOLO 🚀, AGPL-3.0 license
-
 import contextlib
 from copy import deepcopy
 from pathlib import Path
@@ -675,11 +673,27 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             ch = []
         ch.append(c2)
     if model_type=='Yolov8n':
-        from .v8n import Yolov8n
-        from .v8n import Detect as D
+        from .yolov8n import Yolov8n
+        from .yolov8n import Detect as D
         use_layers = nn.Sequential(Yolov8n(ch=3),
                                D(nc=4, ch=[64, 128, 256]))
-        print("pass here")
+        print("pass Yolov8n")
+        return use_layers, sorted(save)
+
+    elif model_type=='Yolov8s':
+        from .yolov8s import Yolov8s
+        from .yolov8s import Detect as D
+        use_layers = nn.Sequential(Yolov8s(ch=3),
+                               D(nc=4, ch=[128, 256, 512]))
+        print("pass Yolov8s")
+        return use_layers, sorted(save)
+
+    elif model_type=='Yolov8m':
+        from .yolov8m import Yolov8m
+        from .yolov8m import Detect as D
+        use_layers = nn.Sequential(Yolov8m(ch=3),
+                               D(nc=4, ch=[192, 384, 576]))
+        print("pass Yolov8m")
         return use_layers, sorted(save)
     else:
         return nn.Sequential(*layers), sorted(save)
