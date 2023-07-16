@@ -3,10 +3,10 @@
 This is self-build up yolov8 for custmization.
 Also this is packaged by poetry.
 
-<img src="https://github.com/madara-tribe/custom-yolov8/assets/48679574/fcc0ce4f-71f5-4311-8a6d-ab8232525d4d" width="600px" height="400px"/>
+<img src="https://github.com/madara-tribe/custom-yolov8/assets/48679574/fcc0ce4f-71f5-4311-8a6d-ab8232525d4d" width="850px" height="400px"/>
 
 
-<img src="https://github.com/madara-tribe/custom-yolov8/assets/48679574/ab990417-7131-4944-9306-e54b1cef7b08" width="600px" height="400px"/>
+<img src="https://github.com/madara-tribe/custom-yolov8/assets/48679574/ab990417-7131-4944-9306-e54b1cef7b08" width="850px" height="400px"/>
 
 
 # how to setup
